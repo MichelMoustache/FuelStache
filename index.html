@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FuelStache v0.6.13</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <h1>FuelStache</h1>
+        <p>LMU LMGT3 fuel, NRG, tyre, and stint planning</p>
+      </div>
+      <div class="version">FuelStache v0.6.13</div>
+    </header>
+
+    <section class="workbench">
+      <article class="card setup-card">
+        <h2>Setup</h2>
+        <div class="form-grid compact">
+          <label>
+            Track / layout
+            <select id="trackSelect"></select>
+          </label>
+          <label>
+            Car
+            <select id="carSelect"></select>
+          </label>
+        </div>
+        <p id="dbStatus" class="status-text">Loading database...</p>
+      </article>
+
+      <article class="card setup-card">
+        <h2>Race Inputs</h2>
+        <div class="form-grid compact">
+        <label>
+          Race duration, minutes
+          <input id="raceMinutesInput" type="number" min="1" step="1" value="30" />
+        </label>
+        <label>
+          Race buffer, laps
+          <input id="raceBufferInput" type="number" min="0" step="1" value="0" />
+        </label>
+        <label>
+          Quali duration, minutes
+          <input id="qualiMinutesInput" type="number" min="0" step="1" value="8" />
+        </label>
+        <label>
+          Quali buffer, laps
+          <input id="qualiBufferInput" type="number" min="0" step="1" value="0" />
+        </label>
+        <label>
+          Multiplier
+          <select id="multiplierSelect">
+            <option value="1">Real / x1</option>
+            <option value="2">x2</option>
+            <option value="3">x3</option>
+          </select>
+        </label>
+        <label>
+          Average lap time
+          <input id="avgLapTimeInput" type="text" placeholder="1:37.091" />
+        </label>
+        <label>
+          Fuel/lap, L
+          <input id="fuelPerLapInput" type="number" min="0" step="0.001" />
+        </label>
+        <label>
+          NRG %/lap
+          <input id="nrgPerLapInput" type="number" min="0" step="0.001" />
+        </label>
+        <label>
+          Tyre deg %/lap
+          <input id="tyreDegInput" type="number" min="0" step="0.001" />
+        </label>
+        <label>
+          Tyre threshold, %
+          <input id="tyreThresholdInput" type="number" min="0" max="100" step="1" value="70" />
+        </label>
+        <label>
+          Tank, L
+          <input id="tankInput" type="number" min="1" step="1" value="120" />
+        </label>
+        <label>
+          LiCo percentage
+          <input id="licoPercentInput" type="number" min="0" max="15" step="1" value="5" />
+        </label>
+        </div>
+        <div class="button-row">
+          <button id="saveStrategyBtn" type="button">Save strategy</button>
+          <button id="reloadSavedBtn" type="button">Reload saved</button>
+          <button id="saveVisibleBtn" type="button">Save visible values</button>
+        </div>
+        <p id="saveStatus" class="status-text"></p>
+        <p id="errorMessage" class="error-text"></p>
+        <p class="info-text">Final stint lap length is unchanged. The app shows the extra 3-lap NRG/VE buffer separately.</p>
+      </article>
+    </section>
+
+    <section class="summary-strip" id="summaryStrip"></section>
+
+    <section class="card strategy-section">
+      <h2>Strategy Plan</h2>
+      <div id="strategyOutput" class="strategy-flow"></div>
+    </section>
+
+    <section class="grid details-grid">
+      <details class="card" open>
+        <summary>Calculation Details</summary>
+        <dl id="results" class="data-list"></dl>
+      </details>
+
+      <details class="card">
+        <summary>Data Source</summary>
+        <dl id="dbInfo" class="data-list"></dl>
+        <p id="confidenceWarning" class="warning-text"></p>
+      </details>
+    </section>
+  </main>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
