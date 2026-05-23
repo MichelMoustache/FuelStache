@@ -12,7 +12,7 @@ const TEST_CAR = "Ferrari 296 LMGT3";
 const TEST_DURATIONS_MINUTES = [30, 60, 90];
 const TYRE_THRESHOLD_PCT = 70;
 const RACE_BUFFER_LAPS = 3;
-const QUALI_BUFFER_LAPS = 0;
+const QUALI_BUFFER_LAPS = 0.5;
 
 function lapTimeToSeconds(value) {
   const match = String(value).trim().match(/^(\d+):([0-5]?\d)(?:\.(\d+))?$/);
@@ -58,8 +58,7 @@ function buildCase(track, minutes) {
   const lapSeconds = lapTimeToSeconds(entry.avgLapTime);
   if (lapSeconds <= 0) throw new Error(`${track}: invalid average lap time`);
 
-  const suggestedRatio = Math.min(1, entry.fuelPerLapL / entry.nrgPerLapPct);
-  const rangeMatchRatio = (100 / entry.nrgPerLapPct) / (entry.tankLiters / entry.fuelPerLapL);
+  const suggestedRatio = entry.fuelPerLapL / entry.nrgPerLapPct;
   const fuelRange = entry.tankLiters / entry.fuelPerLapL;
   const nrgRange = 100 / entry.nrgPerLapPct;
   const finalBufferNrgPct = RACE_BUFFER_LAPS * entry.nrgPerLapPct;
@@ -78,7 +77,6 @@ function buildCase(track, minutes) {
     raceBufferLaps: RACE_BUFFER_LAPS,
     qualiBufferLaps: QUALI_BUFFER_LAPS,
     suggestedRatio: round(suggestedRatio, 3),
-    rangeMatchRatio: round(rangeMatchRatio, 3),
     fuelNeeded: `${round((raceLaps + RACE_BUFFER_LAPS) * entry.fuelPerLapL, 1)} L`,
     qualiFuel: `${round((qualiLaps + QUALI_BUFFER_LAPS) * entry.fuelPerLapL, 1)} L`,
     fuelRange: `${round(fuelRange, 2)} laps`,
@@ -93,7 +91,7 @@ function buildCase(track, minutes) {
     limiter: getLimiter(fuelRange, nrgRange, tyreRange),
     finalLimiter: getLimiter(fuelRange, nrgRange, tyreRange),
     stops: stops.length ? stops.join(", ") : "None",
-    nrgNeeded: `${round((raceLaps + RACE_BUFFER_LAPS) * entry.nrgPerLapPct, 1)}%`,
+    nrgNeededInclBuffer: `${round((raceLaps + RACE_BUFFER_LAPS) * entry.nrgPerLapPct, 1)}%`,
     tyreAtFinish: `${round(Math.max(0, 100 - raceLaps * entry.tyreDegPerLapPct), 1)}%`
   };
 }

@@ -308,7 +308,7 @@ button {
   gap: 6px 9px;
 }
 
-.manual-stop-input {
+.manual-number-input {
   width: 96px;
   max-width: 96px;
   min-height: 32px;

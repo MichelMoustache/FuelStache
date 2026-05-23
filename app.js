@@ -1,4 +1,4 @@
-const VERSION = "FuelStache v0.6.13";
+const VERSION = "FuelStache v0.6.14";
 const VE_SERVICE_SECONDS_PER_PERCENT = 0.4;
 const SAVED_VALUES_KEY = "fuelstache_saved_values_v1";
 const SAVED_STRATEGIES_KEY = "fuelstache_saved_strategies_v1";
@@ -26,6 +26,7 @@ const elements = {
   errorMessage: document.getElementById("errorMessage"),
   dbInfo: document.getElementById("dbInfo"),
   confidenceWarning: document.getElementById("confidenceWarning"),
+  finalBufferInfo: document.getElementById("finalBufferInfo"),
   summaryStrip: document.getElementById("summaryStrip"),
   results: document.getElementById("results"),
   strategyOutput: document.getElementById("strategyOutput")
@@ -33,6 +34,7 @@ const elements = {
 
 let selectedEntry = null;
 let manualStopLapOverride = null;
+let tyreOverridesByStopLap = {};
 
 function initApp() {
   if (!window.FUELSTACHE_DB && typeof FUELSTACHE_DB === "undefined") {
@@ -86,15 +88,18 @@ function wireEvents() {
     elements.raceBufferInput,
     elements.qualiMinutesInput,
     elements.qualiBufferInput,
-    elements.multiplierSelect,
-    elements.avgLapTimeInput,
     elements.fuelPerLapInput,
     elements.nrgPerLapInput,
     elements.tyreDegInput,
     elements.tyreThresholdInput,
     elements.tankInput,
     elements.licoPercentInput
-  ].forEach(input => input.addEventListener("input", recalculate));
+  ].forEach(input => wireDeferredNumberInput(input, () => {
+    clampNumberInput(input);
+    recalculate();
+  }));
+
+  elements.avgLapTimeInput.addEventListener("input", recalculate);
 
   elements.multiplierSelect.addEventListener("change", () => {
     resetManualStopLap();
@@ -105,53 +110,121 @@ function wireEvents() {
   elements.saveVisibleBtn.addEventListener("click", saveVisibleValues);
 
   elements.strategyOutput.addEventListener("input", event => {
-    if (event.target.id === "manualStopLapInput") {
-      event.target.dataset.dirty = "true";
-      if (event.target.dataset.keyboardEdit === "true") return;
-      commitManualStopLap(event.target);
-    }
+    if (!event.target.classList.contains("manual-number-input")) return;
+    event.target.dataset.dirty = "true";
+    if (event.target.dataset.keyboardEdit === "true") return;
+    commitManualStrategyInput(event.target);
   });
 
   elements.strategyOutput.addEventListener("focusin", event => {
-    if (event.target.id === "manualStopLapInput") {
-      event.target.dataset.initialValue = event.target.value;
-      event.target.dataset.dirty = "false";
-    }
+    if (!event.target.classList.contains("manual-number-input")) return;
+    event.target.dataset.initialValue = event.target.value;
+    event.target.dataset.dirty = "false";
   });
 
   elements.strategyOutput.addEventListener("focusout", event => {
-    if (event.target.id === "manualStopLapInput" && event.target.dataset.dirty === "true") {
-      commitManualStopLap(event.target);
+    if (event.target.classList.contains("manual-number-input") && event.target.dataset.dirty === "true") {
+      commitManualStrategyInput(event.target);
     }
   });
 
   elements.strategyOutput.addEventListener("keydown", event => {
-    if (event.target.id !== "manualStopLapInput") return;
+    if (!event.target.classList.contains("manual-number-input")) return;
     if (event.key === "Enter") {
-      commitManualStopLap(event.target);
+      commitManualStrategyInput(event.target);
       event.target.blur();
       return;
     }
-    if (isManualStopTextEditKey(event.key)) {
+    if (isNumberTextEditKey(event.key)) {
       event.target.dataset.keyboardEdit = "true";
       event.target.dataset.dirty = "true";
     }
   });
 }
 
-function resetManualStopLap() {
-  manualStopLapOverride = null;
+function wireDeferredNumberInput(input, onCommit) {
+  input.addEventListener("focusin", () => {
+    input.dataset.initialValue = input.value;
+    input.dataset.dirty = "false";
+  });
+
+  input.addEventListener("input", () => {
+    input.dataset.dirty = "true";
+    if (input.dataset.keyboardEdit === "true") return;
+    commitDeferredNumberInput(input, onCommit);
+  });
+
+  input.addEventListener("focusout", () => {
+    if (input.dataset.dirty === "true") commitDeferredNumberInput(input, onCommit);
+  });
+
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      commitDeferredNumberInput(input, onCommit);
+      input.blur();
+      return;
+    }
+    if (isNumberTextEditKey(event.key)) {
+      input.dataset.keyboardEdit = "true";
+      input.dataset.dirty = "true";
+    }
+  });
 }
 
-function commitManualStopLap(input) {
-  manualStopLapOverride = toOptionalNumber(input.value);
+function commitDeferredNumberInput(input, onCommit) {
+  clampNumberInput(input);
+  input.dataset.dirty = "false";
+  input.dataset.keyboardEdit = "false";
+  onCommit();
+}
+
+function resetManualStopLap() {
+  manualStopLapOverride = null;
+  tyreOverridesByStopLap = {};
+}
+
+function commitManualStrategyInput(input) {
+  const value = clampNumberInput(input);
+  const role = input.dataset.role;
+
+  if (role === "manual-stop") {
+    manualStopLapOverride = value === null ? null : Math.round(value);
+    input.value = manualStopLapOverride === null ? "" : String(manualStopLapOverride);
+  }
+
+  if (role === "tyre-change") {
+    const stopLap = input.dataset.stopLap;
+    const tyresChanged = Math.round(value ?? 0);
+    tyreOverridesByStopLap[stopLap] = tyresChanged;
+    input.value = String(tyresChanged);
+  }
+
   input.dataset.dirty = "false";
   input.dataset.keyboardEdit = "false";
   recalculate();
 }
 
-function isManualStopTextEditKey(key) {
+function isNumberTextEditKey(key) {
   return key.length === 1 || ["Backspace", "Delete"].includes(key);
+}
+
+function clampNumberInput(input) {
+  if (input.value === "") return null;
+  let value = Number(input.value);
+  if (!Number.isFinite(value)) return null;
+
+  const min = input.min === "" ? null : Number(input.min);
+  const max = input.max === "" ? null : Number(input.max);
+
+  if (Number.isFinite(min) && value < min) value = min;
+  if (Number.isFinite(max) && value > max) value = max;
+
+  input.value = formatInputNumber(value);
+  return value;
+}
+
+function formatInputNumber(value) {
+  return String(Math.round(value * 1000) / 1000);
 }
 
 function comboKey() {
@@ -286,6 +359,7 @@ function readInputs() {
     tyreThresholdPct: toNumber(elements.tyreThresholdInput.value),
     tankLiters: toNumber(elements.tankInput.value),
     manualStopLap: manualStopLapOverride,
+    tyreOverridesByStopLap: { ...tyreOverridesByStopLap },
     licoPercent: toNumber(elements.licoPercentInput.value)
   };
 }
@@ -309,6 +383,7 @@ function validateInputs(inputs) {
 
 function recalculate() {
   const inputs = readInputs();
+  renderBufferInfo(inputs);
   const error = validateInputs(inputs);
 
   if (error) {
@@ -359,19 +434,15 @@ function calculateStrategy(inputs) {
   const finalLimiter = limiter;
   const fuelNeededLiters = (raceLaps + inputs.raceBufferLaps) * effectiveFuelPerLapL;
   const qualiFuelLiters = (qualiLaps + inputs.qualiBufferLaps) * effectiveFuelPerLapL;
-  const nrgNeededPct = raceLaps * effectiveNrgPerLapPct;
+  const nrgNeededPct = (raceLaps + inputs.raceBufferLaps) * effectiveNrgPerLapPct;
   const tyreAtFinishPct = Math.max(0, 100 - raceLaps * effectiveTyreDegPerLapPct);
-  let autoPlan = calculateAutoStopPlan(raceLaps, stintCapacityLaps, finalStintCapacityLaps);
-  const licoPlan = calculateLicoPlan(inputs, raceLaps, fuelTankRangeLaps, nrgRangeLaps, tyreRangeLaps);
-  if (autoPlan.stopNeeded && licoPlan.possibleNoStop) {
-    autoPlan = { stopNeeded: false, stopLaps: [], licoClearedStop: true };
-  }
+  const autoPlan = calculateAutoStopPlan(raceLaps, stintCapacityLaps, finalStintCapacityLaps);
   const manualStopError = validateManualStop(inputs.manualStopLap, raceLaps, stintCapacityLaps, finalStintCapacityLaps);
-  const rangeMatchedFuelRatio = calculateRangeMatchedFuelRatio(calculationInputs);
   const suggestedFuelRatio = calculateSuggestedFuelRatio(calculationInputs);
-  const manualStopActive = inputs.manualStopLap !== null && !manualStopError && !autoPlan.licoClearedStop;
-  const manualStopIgnoredByLico = inputs.manualStopLap !== null && Boolean(autoPlan.licoClearedStop);
+  const manualStopActive = inputs.manualStopLap !== null && !manualStopError;
   const chosenStopLaps = manualStopActive ? [inputs.manualStopLap] : autoPlan.stopLaps;
+  const licoSuggestion = calculateFinalStintLicoSuggestion(calculationInputs, chosenStopLaps, tyreRangeLaps);
+  const manualStopBounds = getManualStopBounds(raceLaps, stintCapacityLaps, finalStintCapacityLaps);
   const strategyPlan = buildStrategyPlan(calculationInputs, chosenStopLaps, limiter, finalLimiter, suggestedFuelRatio);
   const startStint = strategyPlan.find(item => item.type === "stint");
   const startFuelLiters = startStint ? startStint.fuelLiters : 0;
@@ -395,8 +466,7 @@ function calculateStrategy(inputs) {
     finalLimiter,
     nrgNeededPct,
     licoPercent: inputs.licoPercent,
-    licoPlan,
-    licoClearedStop: Boolean(autoPlan.licoClearedStop),
+    licoSuggestion,
     tyreAtFinishPct,
     stopNeeded: autoPlan.stopNeeded,
     calculatedStopLap: autoPlan.stopLaps[0] || null,
@@ -406,8 +476,8 @@ function calculateStrategy(inputs) {
     plannedStopCount: chosenStopLaps.length,
     manualStopError,
     manualStopActive,
-    manualStopIgnoredByLico,
-    rangeMatchedFuelRatio,
+    manualStopMinLap: manualStopBounds.min,
+    manualStopMaxLap: manualStopBounds.max,
     suggestedFuelRatio,
     startFuelLiters,
     startFuelRatio,
@@ -415,16 +485,10 @@ function calculateStrategy(inputs) {
   };
 }
 
-function calculateRangeMatchedFuelRatio(inputs) {
-  if (!inputs || inputs.fuelPerLapL <= 0 || inputs.nrgPerLapPct <= 0 || inputs.tankLiters <= 0) return 0;
-  const nrgRangeLaps = 100 / inputs.nrgPerLapPct;
-  const fullTankFuelRangeLaps = inputs.tankLiters / inputs.fuelPerLapL;
-  return nrgRangeLaps / fullTankFuelRangeLaps;
-}
 
 function calculateSuggestedFuelRatio(inputs) {
   if (!inputs || inputs.fuelPerLapL <= 0 || inputs.nrgPerLapPct <= 0) return 0;
-  return Math.min(1, inputs.fuelPerLapL / inputs.nrgPerLapPct);
+  return inputs.fuelPerLapL / inputs.nrgPerLapPct;
 }
 
 function calculateAutoStopPlan(raceLaps, stintCapacityLaps, finalStintCapacityLaps) {
@@ -509,7 +573,9 @@ function buildStrategyPlan(inputs, stopLaps, limiter, finalLimiter, suggestedFue
       const nextBufferLaps = nextIsFinal ? inputs.raceBufferLaps : 0;
       const targetVeAtExit = Math.min(100, (nextStintLaps + nextBufferLaps) * inputs.nrgPerLapPct);
       const veAdded = Math.max(0, targetVeAtExit - veAtEnd);
-      const tyresChanged = tyreAtEnd <= inputs.tyreThresholdPct ? 4 : 0;
+      const defaultTyresChanged = tyreAtEnd <= inputs.tyreThresholdPct ? 4 : 0;
+      const tyreOverride = inputs.tyreOverridesByStopLap?.[String(endLap)];
+      const tyresChanged = Number.isFinite(tyreOverride) ? tyreOverride : defaultTyresChanged;
       const tyreServiceSeconds = getTyreServiceSeconds(tyresChanged);
 
       plan.push({
@@ -545,23 +611,73 @@ function calculateSessionLaps(minutes, averageLapSeconds) {
   return Math.ceil((minutes * 60) / averageLapSeconds);
 }
 
-function calculateLicoPlan(inputs, raceLaps, fuelTankRangeLaps, nrgRangeLaps, tyreRangeLaps) {
-  const fuelRequiredLaps = raceLaps + inputs.raceBufferLaps;
-  const nrgRequiredLaps = raceLaps + inputs.raceBufferLaps;
-  const fuelShortfallPct = fuelRequiredLaps > fuelTankRangeLaps
-    ? ((fuelRequiredLaps - fuelTankRangeLaps) / fuelRequiredLaps) * 100
-    : 0;
-  const nrgShortfallPct = nrgRequiredLaps > nrgRangeLaps
-    ? ((nrgRequiredLaps - nrgRangeLaps) / nrgRequiredLaps) * 100
-    : 0;
-  const tyreBlocks = raceLaps > tyreRangeLaps;
-  const neededLicoPct = Math.max(fuelShortfallPct, nrgShortfallPct);
+function getManualStopBounds(raceLaps, stintCapacityLaps, finalStintCapacityLaps) {
+  const min = Math.max(1, raceLaps - Math.floor(finalStintCapacityLaps));
+  const max = Math.min(raceLaps - 1, Math.floor(stintCapacityLaps));
+  if (min > max) return { min: 1, max: Math.max(1, raceLaps - 1) };
+  return { min, max };
+}
+
+function calculateFinalStintLicoSuggestion(inputs, stopLaps, tyreRangeLaps) {
+  if (!stopLaps.length) {
+    return { possible: false, status: "not-needed" };
+  }
+
+  const finalStopLap = stopLaps[stopLaps.length - 1];
+  const stretchStartLap = stopLaps.length > 1 ? stopLaps[stopLaps.length - 2] : 0;
+  const stretchLaps = inputs.raceLaps - stretchStartLap;
+  const maxLicoPct = inputs.licoPercent;
+
+  if (stretchLaps > tyreRangeLaps) {
+    return { possible: false, status: "tyres-block", finalStopLap, stretchLaps, maxLicoPct };
+  }
+
+  const fullBufferOption = calculateLicoBufferOption(inputs, stretchLaps, inputs.raceBufferLaps);
+  if (fullBufferOption.requiredLicoPct <= maxLicoPct) {
+    return {
+      possible: true,
+      status: "full-buffer",
+      finalStopLap,
+      stretchLaps,
+      originalBufferLaps: inputs.raceBufferLaps,
+      bufferLaps: inputs.raceBufferLaps,
+      requiredLicoPct: fullBufferOption.requiredLicoPct,
+      maxLicoPct
+    };
+  }
+
+  if (inputs.raceBufferLaps <= 0 || maxLicoPct <= 0) {
+    return { possible: false, status: "not-enough-lico", finalStopLap, stretchLaps, maxLicoPct };
+  }
+
+  const licoFactor = 1 - maxLicoPct / 100;
+  const fuelBufferLimit = inputs.tankLiters / (inputs.fuelPerLapL * licoFactor) - stretchLaps;
+  const nrgBufferLimit = 100 / (inputs.nrgPerLapPct * licoFactor) - stretchLaps;
+  const reducedBufferLaps = Math.max(0, Math.min(inputs.raceBufferLaps, fuelBufferLimit, nrgBufferLimit));
+  const reducedBufferOption = calculateLicoBufferOption(inputs, stretchLaps, reducedBufferLaps);
+
+  if (reducedBufferOption.requiredLicoPct <= maxLicoPct) {
+    return {
+      possible: true,
+      status: reducedBufferLaps <= 0 ? "no-buffer" : "reduced-buffer",
+      finalStopLap,
+      stretchLaps,
+      originalBufferLaps: inputs.raceBufferLaps,
+      bufferLaps: reducedBufferLaps,
+      requiredLicoPct: reducedBufferOption.requiredLicoPct,
+      maxLicoPct
+    };
+  }
+
+  return { possible: false, status: "not-enough-lico", finalStopLap, stretchLaps, maxLicoPct };
+}
+
+function calculateLicoBufferOption(inputs, stretchLaps, bufferLaps) {
+  const requiredLaps = stretchLaps + bufferLaps;
+  const fuelRequiredPct = 1 - inputs.tankLiters / (requiredLaps * inputs.fuelPerLapL);
+  const nrgRequiredPct = 1 - 100 / (requiredLaps * inputs.nrgPerLapPct);
   return {
-    possibleNoStop: !tyreBlocks && neededLicoPct > 0 && neededLicoPct <= inputs.licoPercent,
-    fuelShortfallPct,
-    nrgShortfallPct,
-    neededLicoPct,
-    tyreBlocks
+    requiredLicoPct: Math.max(0, fuelRequiredPct, nrgRequiredPct) * 100
   };
 }
 
@@ -571,6 +687,21 @@ function getTyreServiceSeconds(tyresChanged) {
   return 12;
 }
 
+function renderBufferInfo(inputs) {
+  if (!elements.finalBufferInfo) return;
+  const bufferText = `${formatLapCount(inputs.raceBufferLaps)} ${pluralize("lap", inputs.raceBufferLaps)}`;
+  elements.finalBufferInfo.textContent = inputs.raceBufferLaps > 0
+    ? `Final stint lap length is unchanged. The app shows the extra ${bufferText} NRG/VE buffer separately.`
+    : "Final stint lap length is unchanged. No race buffer is currently configured.";
+}
+
+function formatLapCount(value) {
+  return String(Math.round(Number(value) * 10) / 10);
+}
+
+function pluralize(word, value) {
+  return Number(value) === 1 ? word : `${word}s`;
+}
 function renderDbInfo(entry) {
   if (!entry) {
     elements.dbInfo.innerHTML = "";
@@ -622,14 +753,13 @@ function renderResults(result) {
     ["Start fuel", `${formatNumber(result.startFuelLiters, 1)} L`],
     ["Start fuel ratio", formatNumber(result.startFuelRatio, 3)],
     ["Post-stop fuel ratio", formatNumber(result.suggestedFuelRatio, 3)],
-    ["Range-match ratio", formatNumber(result.rangeMatchedFuelRatio, 3)],
-    ["Ratio note", "Suggested uses fuel/lap divided by NRG/lap; range-match shows the theoretical 100% VE vs tank range point."],
-    ["Stop needed", result.licoClearedStop ? "No, cleared by LiCo" : (result.stopNeeded ? "Yes" : "No")],
+    ["Ratio note", "Suggested uses fuel/lap divided by NRG/lap."],
+    ["Stop needed", result.stopNeeded ? "Yes" : "No"],
     ["Planned stops", result.plannedStopLaps.length ? result.plannedStopLaps.join(", ") : "None"],
     ["Manual stop", manualStopStatusText(result)],
-    ["LiCo setting", `${formatNumber(result.licoPercent, 0)}%`],
-    ["LiCo needed", `${formatNumber(result.licoPlan.neededLicoPct, 1)}%`],
-    ["NRG needed", `${formatNumber(result.nrgNeededPct, 1)}%`],
+    ["Max LiCo", `${formatNumber(result.licoPercent, 0)}%`],
+    ["LiCo suggestion", licoSuggestionText(result.licoSuggestion)],
+    ["NRG needed incl. buffer", `${formatNumber(result.nrgNeededPct, 1)}%`],
     ["Tyre at finish", `${formatNumber(result.tyreAtFinishPct, 1)}%`]
   ];
 
@@ -653,7 +783,7 @@ function renderSummary(result) {
   elements.summaryStrip.innerHTML = [
     summaryCard("Race laps", result.raceLaps, fuelSummaryText(result.fuelNeededLiters, inputs.raceBufferLaps), ""),
     summaryCard("Quali", result.qualiLaps, fuelSummaryText(result.qualiFuelLiters, inputs.qualiBufferLaps), ""),
-    summaryCard("Strategy", result.licoClearedStop ? "No stop + LiCo" : (result.plannedStopCount ? `${result.plannedStopCount} stop${result.plannedStopCount === 1 ? "" : "s"}` : "No stop"), result.plannedStopLaps.length ? `laps ${result.plannedStopLaps.join(", ")}` : "race to finish", stopClass),
+    summaryCard("Strategy", result.plannedStopCount ? `${result.plannedStopCount} stop${result.plannedStopCount === 1 ? "" : "s"}` : "No stop", result.licoSuggestion.possible ? "LiCo can remove final stop" : (result.plannedStopLaps.length ? `laps ${result.plannedStopLaps.join(", ")}` : "race to finish"), stopClass),
     summaryCard("Limiter", result.limiter, `${formatNumber(result.stintCapacityLaps, 1)} lap stint`, ""),
     summaryCard("Start fuel", `${formatNumber(result.startFuelLiters, 1)} L`, `ratio ${formatNumber(result.startFuelRatio, 3)}`, ""),
     summaryCard("Stop ratio", formatNumber(result.suggestedFuelRatio, 3), "after pit stops", ""),
@@ -670,10 +800,24 @@ function summaryCard(label, value, detail, className) {
 }
 
 function manualStopStatusText(result) {
-  if (result.manualStopIgnoredByLico) return "Ignored, LiCo clears stop";
   if (result.manualStopError) return result.manualStopError;
   if (result.manualStopActive) return `Active, lap ${manualStopLapOverride}`;
   return "Auto";
+}
+
+function licoSuggestionText(suggestion) {
+  if (!suggestion || suggestion.status === "not-needed") return "Not needed";
+  if (suggestion.possible && suggestion.status === "full-buffer") {
+    return `Remove stop ${suggestion.finalStopLap} with ${formatNumber(suggestion.requiredLicoPct, 1)}% LiCo; full ${formatLapCount(suggestion.bufferLaps)} lap buffer kept.`;
+  }
+  if (suggestion.possible && suggestion.status === "reduced-buffer") {
+    return `Remove stop ${suggestion.finalStopLap} with ${formatNumber(suggestion.requiredLicoPct, 1)}% LiCo if buffer is reduced from ${formatLapCount(suggestion.originalBufferLaps)} to ${formatLapCount(suggestion.bufferLaps)} laps.`;
+  }
+  if (suggestion.possible && suggestion.status === "no-buffer") {
+    return `Remove stop ${suggestion.finalStopLap} with ${formatNumber(suggestion.requiredLicoPct, 1)}% LiCo only with no race buffer.`;
+  }
+  if (suggestion.status === "tyres-block") return "No option: tyres block the stretched final stint.";
+  return `No final-stop option up to ${formatNumber(suggestion.maxLicoPct || 0, 0)}% LiCo.`;
 }
 
 function fuelSummaryText(liters, bufferLaps) {
@@ -700,8 +844,8 @@ function renderStrategyPlan(result) {
   const manualWarning = result.manualStopError
     ? `<div class="strategy-warning">${escapeHtml(result.manualStopError)} Auto plan shown below.</div>`
     : "";
-  const licoNotice = result.manualStopIgnoredByLico
-    ? `<div class="strategy-warning">Manual stop ignored because LiCo clears the stop.</div>`
+  const licoNotice = result.licoSuggestion.possible
+    ? `<div class="strategy-warning">${escapeHtml(licoSuggestionText(result.licoSuggestion))}</div>`
     : "";
 
   elements.strategyOutput.innerHTML = manualWarning + licoNotice + result.strategyPlan.map(item => {
@@ -739,23 +883,29 @@ function renderStopCard(stop, result) {
   return `<article class="strategy-card stop">
     <h3>Stop ${stop.number}</h3>
     <dl class="data-list">${definitionRows([
-      ["Stop lap", manualStopInput(manualStopValue)],
+      ["Stop lap", manualStopInput(manualStopValue, result.manualStopMinLap, result.manualStopMaxLap)],
       ["VE entry", `${formatNumber(stop.veAtEntry, 1)}%`],
       ["VE add", `${formatNumber(stop.veAdded, 1)}%`],
       ["VE exit", `${formatNumber(stop.veAtExit, 1)}%`],
       ["Next stint", nextText],
       ["Next fuel", `${formatNumber(stop.nextFuelLiters, 1)} L`],
       ["Fuel ratio", formatNumber(stop.fuelRatio, 3)],
-      ["Tyres", stop.tyresChanged],
+      ["Tyres", tyreChangeInput(stop.tyresChanged, stop.stopLap)],
       ["Service", `${formatNumber(stop.serviceSeconds, 1)}s`],
       ["Next limiter", stop.limiterForNextStint]
     ])}</dl>
   </article>`;
 }
 
-function manualStopInput(value) {
+function manualStopInput(value, min, max) {
   return {
-    html: `<input id="manualStopLapInput" class="manual-stop-input" type="number" min="1" step="1" value="${escapeHtml(value)}" aria-label="Manual stop lap" />`
+    html: `<input class="manual-number-input" type="number" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="1" value="${escapeHtml(value)}" data-role="manual-stop" aria-label="Manual stop lap" />`
+  };
+}
+
+function tyreChangeInput(value, stopLap) {
+  return {
+    html: `<input class="manual-number-input tyre-change-input" type="number" min="0" max="4" step="1" value="${escapeHtml(value)}" data-role="tyre-change" data-stop-lap="${escapeHtml(stopLap)}" aria-label="Tyres changed at stop ${escapeHtml(stopLap)}" />`
   };
 }
 
